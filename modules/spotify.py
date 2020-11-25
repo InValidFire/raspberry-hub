@@ -28,6 +28,7 @@ def login(request: Request, token=None):
 
 @router.get("/spotify/callback")
 def set_token(code, request: Request):
+    oauth.get_access_token(code)
     return RedirectResponse(f"{get_site()}/spotify")
 
 @router.get("/spotify")
