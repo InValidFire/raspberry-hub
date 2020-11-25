@@ -124,6 +124,6 @@ if len(load_data().keys()) == 0:
     system = {}
     system['site'] = input("Enter API website: ")
     config.save(config_file, system)
-    token = {"token": generate_token().hex}
+    token = {"token": generate_token().hex, "ips": [], "lastUsed": None}
     config.save(token_file, token)
     print(f"Record this somewhere, it won't be displayed again:\ntoken: {token['token']}")
