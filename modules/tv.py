@@ -6,7 +6,6 @@ from modules.system import token_required, write_log
 from modules.devices import get_devices_by_type
 
 tvs = get_devices_by_type("TV")
-print(tvs)
 if len(tvs) > 0:
     data = {"roku": Roku(tvs[0])}
 else:
@@ -19,7 +18,7 @@ def tv_set(func):
     @wraps(func)
     def inner(*args, **kwargs):
         if data['roku'] is not None:
-            func(args, kwargs)
+            return func(args, kwargs)
         else:
             return {"message": "TV not set."}
     return inner
