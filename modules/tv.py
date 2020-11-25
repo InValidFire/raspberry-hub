@@ -18,7 +18,7 @@ def tv_set(func):
     @wraps(func)
     def inner(*args, **kwargs):
         if data['roku'] is not None:
-            return func(args, kwargs)
+            return func(*args, **kwargs)
         else:
             return {"message": "TV not set."}
     return inner
@@ -64,8 +64,8 @@ def tv_off(request: Request, token = None):
         return e
 
 @router.get("/tv/vol/{state}", tags=['tv'])
-@tv_set
 @token_required
+@tv_set
 def tv_vol(state: str, request: Request, token = None):
     write_log(f"Triggered /tv/vol/{state}")
     if state == "up":
