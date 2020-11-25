@@ -31,7 +31,6 @@ def set_token(code, request: Request):
     return RedirectResponse(f"{get_site()}/spotify")
 
 @router.get("/spotify")
-@token_required
 def spotify(request: Request, token = None):
     access_token = get_token()
     api = spotipy.Spotify(access_token)
