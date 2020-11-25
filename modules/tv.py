@@ -6,8 +6,9 @@ from modules.system import token_required, write_log
 from modules.devices import get_devices_by_type
 
 tvs = get_devices_by_type("TV")
+print(tvs)
 if len(tvs) > 0:
-    data = {"roku": Roku(tvs[0])}  # TODO: temporary until IP mapping is set up.
+    data = {"roku": Roku(tvs[0])}
 else:
     data = {"roku": None}
     write_log("tv: TV not set.")
