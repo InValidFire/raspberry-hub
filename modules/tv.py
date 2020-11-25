@@ -64,8 +64,8 @@ def tv_off(request: Request, token = None):
         return e
 
 @router.get("/tv/vol/{state}", tags=['tv'])
-@token_required
 @tv_set
+@token_required
 def tv_vol(state: str, request: Request, token = None):
     write_log(f"Triggered /tv/vol/{state}")
     if state == "up":
