@@ -1,9 +1,0 @@
-requests==2.22.0
-spotipy==2.16.1
-starlette==0.13.6
-pydantic==1.7.2
-roku==4.1.0
-ghau==0.4
-invalidfire_utils==2020.10.9.1
-fastapi==0.61.2
-PyJWT==1.7.1

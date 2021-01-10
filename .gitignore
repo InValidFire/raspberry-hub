@@ -2,3 +2,7 @@ data/
 logs/
 __pycache__/
 .spotifycache
+old/
+.vscode/
+*.db
+uuid

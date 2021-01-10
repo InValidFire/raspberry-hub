@@ -1,74 +1,34 @@
-# TODO: send notification to nodes when 12hrs in-between medication
-from modules.system import token_required, generate_file
-from typing import List
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
-from datetime import datetime, timedelta
-from pathlib import Path
-from ivf import config
+# pylint: disable=no-name-in-module
+
+from common.constants import FK_NOT_FOUND, POST_SUCCESS, RECORD_NOT_FOUND
+from datetime import datetime
+from fastapi import APIRouter
+import common.database as database
 
 router = APIRouter()
-DATE_FORMAT = "%m-%d-%y"
 
-config_file = Path("data/medicine.json")
-generate_file(config_file, "{}")
+@router.post("/medicine")
+def post_medicine(medication: str, dosage: int):
+    mecicine = database.Medicine(medication=medication, dosage=dosage)
+    mecicine.save()
+    database.db.close()
+    return POST_SUCCESS
 
-class Record(BaseModel):
-    medication: str
-    date: str
-    time: str
+@router.post("/medicine/record")
+def post_medicine_record(medicine):
+    try:
+        medicine = database.MedicineRecord(medication=medicine)
+        medicine.save()
+        return POST_SUCCESS
+    except database.IntegrityError:
+        return FK_NOT_FOUND
+    finally:
+        database.db.close()
 
-def load_data():
-    return config.load(config_file)
-
-def write_data(record: Record, data = load_data()):
-    if record.date in data:
-        if record.medication in data[record.date]:
-            data[record.date][record.medication] += [record.time]
-            config.save(config_file, data)
-        else:
-            data[record.date][record.medication] = []
-            write_data(record, data)
-    else:
-        data[record.date] = {}
-        write_data(record, data)
-
-@router.get("/medicine/records/{date}", tags=['medicine'])
-@token_required
-def get_date(date, request: Request, token = None):
-    data = load_data()
-    if date in data:
-        return data[date]
-    else:
-        return {"message": "Record not found."}
-
-@router.get("/medicine", tags=['medicine'])
-@token_required
-def get_today(request: Request, token = None):
-    now = datetime.now()
-    date = now.strftime(DATE_FORMAT)
-    data = load_data()
-    if date in data:
-        return data[date]
-    else:
-        return {'message': "No record for today."}
-
-@router.get("/medicine/lastTaken", tags=['medicine'])
-@token_required
-def get_last_taken(request: Request, token = None, medicine = None):  # TODO: Refactor this
-    data = load_data()
-    dates: List[datetime] = []
-    for date in data:
-        dates.append(datetime.strptime(date, DATE_FORMAT))
-    latest_date = max(dates).strftime(DATE_FORMAT)
-    latest_time = data[latest_date][medicine][-1]
-    hours = int(latest_time.split(".")[0])
-    minutes = int(latest_time.split(".")[1])
-    relative = (datetime.now()-(max(dates)+timedelta(hours=hours, minutes=minutes)))
-    return {"date": latest_date, "time": latest_time, "relativeToNow": ":".join(str(relative).split(".")[0].split(":")[:2])}
-
-@router.post("/medicine", tags=['medicine'])
-@token_required
-def new_record(record: Record, request: Request, token = None):
-    write_data(record)
-    return load_data()
+@router.get("/medicine/record")
+def get_medicine():
+    response = []
+    medicine = database.MedicineRecord.select().where(database.MedicineRecord.datetime_taken >= datetime.now().date())
+    for record in medicine:
+        response.append(database.model_to_dict(record))
+    return response

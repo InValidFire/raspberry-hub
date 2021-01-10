@@ -1,0 +1,17 @@
+{
+    "version": "0.2",
+    "repo": "InValidFire/raspberry-hub",
+    "pre-releases": false,
+    "boot_check": false,
+    "download": "zip",
+    "reboot": {
+        "mode": "python",
+        "file": "main.py"
+    },
+    "auth": {
+        "key": {
+            "env": "GHAPI_KEY"
+        },
+        "ratemin": 30
+    }
+}

@@ -1,73 +1,50 @@
-from modules.system import write_log, token_required
-from fastapi import APIRouter, Request
+import uuid
+import logging
+from modules.system import token_required
 from pathlib import Path
-from ivf import config
-import requests
+from fastapi import APIRouter, Request
+import common.database as database
+from common.network import get_address
+from common.constants import RECORD_NOT_FOUND, POST_SUCCESS
 
-from pydantic import BaseModel
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-config_file = Path("data/devices.json")
-if not Path("data").exists():
-    Path('data').mkdir()
-config_file.touch()
-if config_file.read_text() == "":
-    config_file.write_text("[]")
+@router.on_event("startup")
+def startup():
+    uuid_file = Path("uuid")
+    uuid_file.touch(exist_ok=True)
+    device_uuid = uuid_file.read_text()
+    if device_uuid == "":
+        uuid_file.write_text(f"{uuid.uuid4()}")
+        device_uuid = uuid_file.read_text()
+    device_uuid = uuid.UUID(device_uuid)
+    try:
+        database.db.connect(reuse_if_open=True)
+        device = database.Device.select().where(database.Device.device_uuid == str(device_uuid)).get()
+        device.address = get_address()
+        logger.info(f"Updated record for device in local database. IP: {device.address}")
+    except database.DoesNotExist:
+        device = database.Device.create(device_uuid=device_uuid, address=get_address(), kind="hub")
+        logger.info(f"Added record for device in local database. IP: {device.address}")
+    finally:
+        database.db.close()
 
-class Device(BaseModel):
-    identifier: int
-    address: str
-    kind: str
-
-def load_data() -> list:
-    return config.load(config_file)
-
-def get_id():
-    data = load_data()
-    num = 0
-    for device in data:
-        if data[device]['id'] >= num:
-            num = data[device]['id']+1
-            print(num)
-    return num
-
-def write_data(device: Device, data: list = load_data()):
-    device = {"address": device.address, "kind": device.kind, "id": device.identifier}
-    for item in data:
-        if item['id'] == device['id']:
-            data[data.index(item)] = device
-            config.save(config_file, data)
-            return
-    data.append(device)
-    config.save(config_file, data)
-
-def get_devices_by_type(type: str):
-    data = load_data()
-    devices = []
-    for device in data:
-        if device['kind'] == type:
-            devices.append(device['address'])
-    return devices
-
-def get_device_by_id(device_id: int):
-    data = load_data()
-    return data[device_id]
-
-@router.post("/devices", tags=['devices'])
+@router.get("/devices")
 @token_required
-def add_device(device: Device, request: Request, token = None):
-    write_log(f"Posted to /devices with device: {device.identifier} - {device.address} - {device.kind}")
-    write_data(device)
-    return load_data()
+async def get_device(request: Request, token: str, uuid: str):
+    try:
+        device = database.Device.select().where(database.Device.device_uuid == uuid).get()
+        return device.ip
+    except database.DoesNotExist:
+        return RECORD_NOT_FOUND
+    finally:
+        database.db.close()
 
-@router.get("/devices", tags=['devices'])
+@router.post("/device")
 @token_required
-def get_devices(request: Request, token = None):
-    write_log(f"Triggered /devices")
-    data = load_data()
-    return data
-
-def send_to_device(ip: str, route: str):
-    r = requests.get(ip+route).text.rstrip()
-    return r
+async def post_device(request: Request, token: str, id: str, ip: str, kind: str):
+    database.Device(id=id, ip=ip, kind=kind)
+    database.db.close()
+    return POST_SUCCESS

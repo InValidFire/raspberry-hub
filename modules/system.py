@@ -1,129 +1,81 @@
-from fastapi import APIRouter, Request
-from pathlib import Path
-from functools import wraps
-from ivf import config
+# pylint: disable=no-name-in-module
 import uuid
-import datetime
-import requests
-import socket
-import os
+import logging
+from pathlib import Path
+from fastapi import APIRouter, Request
+from functools import wraps
+from common.constants import EVENT_SCHEDULED, POST_SUCCESS
+from pydantic import BaseModel
+from common import database, network
+from datetime import datetime
+import common.scheduler as scheduler
+import shlex, subprocess
 
 from starlette.exceptions import HTTPException
 
-config_file = Path("data/system.json")
-token_file = Path("data/token.json")
-
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-def generate_file(path: Path, content):
-    if not Path('data').exists():
-        Path('data').mkdir()
-    path.touch()
-    if path.read_text() == "":
-        path.write_text(content)
-
-generate_file(config_file, "{}")
-generate_file(token_file, "{}")
-
-def load_data():
-    return config.load(config_file)
-
-def load_token():
-    return config.load(token_file)
-
-def get_key():
-    data = load_data()
-    return data['key']
-
-def generate_token():
-    return uuid.UUID(bytes=os.urandom(16), version=4)
+class APIKey(BaseModel):
+    service: str
+    key: str
 
 def token_required(func):
     @wraps(func)
     def inner(*args, **kwargs):
-        print("running token check")
-        data = load_token()
-        if load_token()['token'] == kwargs['token']:
-            data['lastUsed'] = datetime.datetime.now().strftime("%m-%d-%Y | %H:%M:%S")
-            if kwargs['request'].client.host not in data['ips']:
-                data['ips'].append(kwargs['request'].client.host)
-            config.save(token_file, data)
+        logger.debug("running token check")
+        try:
+            token = database.Token.select().where(database.Token.token == kwargs['token']).get()
+            token.last_ip = kwargs['request'].client.host
+            token.last_used = datetime.now()
+            token.save()
             return func(*args, **kwargs)
-        else:
-            raise HTTPException(404)
+        except database.DoesNotExist:
+            raise HTTPException
+        finally:
+            database.db.close()
     return inner
 
-def write_log(msg):
-    """Write a message to the logs."""
-    now = datetime.datetime.now()
-    date = now.strftime("%d-%m-%Y")
-    time = now.strftime("%H:%M:%S | ")
-    logdir = Path("logs")
-    if not logdir.exists():
-        logdir.mkdir()
-    logfile = Path(f"logs/{date}")
-    logfile.touch()  # ensures file exist
-    with logfile.open("a+") as f:
-        f.write(time+msg+"\n")
+@router.on_event("startup")
+def master_token():
+    try:
+        token = database.Token.select().where(database.Token.device == Path("uuid").read_text()).get()
+    except database.DoesNotExist:
+        token = database.Token.create(token=uuid.uuid4(), device=Path("uuid").read_text(), last_ip=network.get_address())
+    finally:
+        token.save()
+        database.db.close()
+        logger.info(f"Master Token: {token.token}")
 
-def get_site():
-    data = load_data()
-    return data['site']
-
-def set_site(site: str):
-    data = load_data()
-    data['site'] = site
-    config.save()
-
-def _update_handler(args):
-    """Used in the update process to output messages to logs."""
-    old_version, new_version = args
-    write_log(f"Updated from {old_version} to {new_version}.")
-
-@router.get("/system", tags=['system'])
+@router.get("/token")
 @token_required
-def system_home(request: Request, token = None):
-    write_log("Triggered /system")
-    return {"module": "active!"}
+def generate_token(request: Request, token: str, device_uuid: str):
+    device = database.Device.select().where(database.Device.device_uuid == device_uuid).get()
+    token = database.Token.create(token=uuid.uuid4(), device=device.device_uuid, last_ip=request.client.host)
+    token.save()
+    database.db.close()
+    logger.info(f"Token generated for IP: {token.last_ip} - {token.token}")
+    return database.model_to_dict(token)
 
-@router.get("/system/address", tags=['system'])
+def restart():
+    subprocess.run(shlex.split("shutdown -r now"))
+
+@router.get("/status")
 @token_required
-def get_address(request: Request, token = None):
-    """Returns the internal and external IP addresses"""
-    write_log("Triggered /system/address")
-    external = requests.get("https://ipinfo.io/ip").text.rstrip()
-    internal = socket.gethostbyname(socket.gethostname())
-    return {"internal": internal, "external": external}
+def status(request: Request, token: str):
+    return "OK"
 
-@router.get("/system/log", tags=['system'])
+@router.get("/restart")
 @token_required
-def get_logs(request: Request, token = None):
-    """Returns latest logfile's contents."""
-    write_log("Triggered /system/log")
-    now = datetime.datetime.now()
-    date = now.strftime("%d-%m-%Y")
-    logfile = Path(f"logs/{date}")
-    return logfile.read_text()
+async def restart_hub(request: Request, token: str):
+    scheduler.schedule_event(restart, 3, 1)
+    scheduler.run_scheduler()
+    return EVENT_SCHEDULED
 
-@router.post("/system/shutdown", tags=['system'])  # TODO: schedule instead of immediate
+@router.post("/key")
 @token_required
-def shutdown(request: Request, token = None):
-    """Shutdown the system."""
-    write_log("Triggered /system/shutdown")
-    os.execv("shutdown now")
-
-@router.post("/system/restart", tags=['system'])  # TODO: schedule instead of immediate
-@token_required
-def reboot(request: Request, token = None):
-    """Restart the system."""
-    write_log("Triggered /system/restart")
-    os.execv("shutdown -r now")
-
-if len(load_data().keys()) == 0:
-    print("No system.json file found. Entering API setup.")
-    system = {}
-    system['site'] = input("Enter API website: ")
-    config.save(config_file, system)
-    token = {"token": generate_token().hex, "ips": [], "lastUsed": None}
-    config.save(token_file, token)
-    print(f"Record this somewhere, it won't be displayed again:\ntoken: {token['token']}")
+async def key(request: Request, token: str, key: APIKey):
+    api_key = database.APIKey.create(service=key.service, key=key.key)
+    api_key.save()
+    database.db.close()
+    return POST_SUCCESS
